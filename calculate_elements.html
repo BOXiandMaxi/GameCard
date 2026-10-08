@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+    <pre id="output">Loading...</pre>
+    <script>
+        const cards = [
+            '1346', '1403', '1755', '2005', '2119', '2169', '2228', '2581', '2604', '2705',
+            '2957', '3284', '3306', '3350', '3502', '3805', '4068', '4190', '4309', '4331',
+            '4650', '4837', '4847', '5268', '5463', '5533', '5668', '5788', '5802', '5809',
+            '5823', '5836', '6233', '6269', '6405', '6414', '6464', '6535', '6788', '6997',
+            '7157', '7324', '7730', '7785', '7815', '7824', '7877', '7917', '8023', '8312',
+            '8400', '8579', '8605', '8865', '8904', '9013', '9228', '9230', '9284', '9331',
+            '9342', '9400', '9422', '9706', '9795'
+        ];
+        const results = {};
+        let loaded = 0;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        // We check the icon in the top left, let's say around (80, 80) for a 1024x1024 or 1024x1434 image
+        // To be safe, let's sample a small 40x40 area around (60, 60)
+        function getElement(img) {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            const data = ctx.getImageData(40, 40, 40, 40).data;
+            let r = 0, g = 0, b = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                r += data[i]; g += data[i + 1]; b += data[i + 2];
+            }
+            r /= (data.length / 4); g /= (data.length / 4); b /= (data.length / 4);
+
+            // Logic to classify color
+            // Wind is cyan (high g & b), Water is blue (high b), Fire is red/orange (high r)
+            // Earth is green/brown (high g or mixed), Light is yellow/white (high r, g, b)
+            // Dark is purple/black (low values or high r & b)
+
+            if (r > 200 && g > 200 && b > 200) return 'light';
+            if (r > 200 && g > 150 && b < 100) return 'light'; // Some light icons are golden
+            if (r > 150 && b > 150 && g < 100) return 'dark'; // purple
+            if (r < 100 && g < 100 && b < 100) return 'dark'; // black/dark
+            if (b > r && b > g + 20) return 'water';
+            if (g > r + 20 && b > r + 20) return 'wind'; // cyan usually
+            if (g > r && g > b) return 'earth';
+            if (r > b + 50 && r > g + 20) return 'fire';
+
+            // Fallbacks:
+            if (r > 180 && g > 180) return 'light'; // yellow
+            return 'earth'; // default guess
+        }
+
+        cards.forEach(id => {
+            const img = new Image();
+            img.src = `public/cards/cardfront/card${id}.png`;
+            img.onload = () => {
+                results[id] = getElement(img);
+                loaded++;
+                if (loaded === cards.length) {
+                    document.getElementById('output').textContent = JSON.stringify(results, null, 2);
+                }
+            };
+            img.onerror = () => {
+                results[id] = 'unknown';
+                loaded++;
+            }
+        });
+    </script>
+</body>
+
+</html>
