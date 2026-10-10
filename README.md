@@ -41,27 +41,30 @@
    npm install
 
    <!-- ================= PREVIEW SHOWCASE ================= -->
-## 📸 Visual Showcase & Gallery
+<!-- ================= GAMEPLAY & INTERFACE SHOWCASE ================= -->
+## 🎮 In-Game Showcase & Visual Experience
 
 <div align="center">
 
-### ⚡ Live Card Interaction (Preview)
-<!-- แนะนำใช้ไฟล์ .gif หรือ .webp สั้นๆ แสดงการเอียง 3D และแสงฟอยล์ -->
-<img src="./assets/demo-interaction.gif" alt="Interactive 3D Demo" width="750" style="border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);" />
+### ⚔️ Battle Arena & Combat Showcase (สนามประลองจริง)
+<!-- ภาพแบนเนอร์หลัก: จังหวะจำลองกระดานต่อสู้ แนะนำใช้ .gif หรือ .png คมชัดสูง -->
+<img src="./assets/game-battleground.gif" alt="Game Battle Arena" width="850" style="border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.85); border: 1px solid rgba(255,255,255,0.12);" />
 
+<br/>
+<em>⚡ สนามประลอง Real-time Board Tactics พร้อมระบบวางการ์ดและคำนวณดาเมจ</em>
 <br/><br/>
 
-### 🔮 Card Showcase & Studio UI
+### 🕹️ Interface & Combat Previews
 
-| 🐉 Mythic Wyrm (Foil) | ⚔️ Legendary Paladin |
+| 🏰 1. Main Menu (หน้าเมนูหลัก) | 🎴 2. Card View (หน้ารายละเอียดการ์ด 3D) |
 | :---: | :---: |
-| <img src="./assets/card-mythic.png" alt="Mythic Card" width="340" style="border-radius: 12px;" /> | <img src="./assets/card-legendary.png" alt="Legendary Card" width="340" style="border-radius: 12px;" /> |
-| **✦ Cosmic Hologram Effect** | **✦ Golden Border & Specular Glare** |
+| <img src="./assets/menu-lobby.png" alt="Main Menu Screen" width="390" style="border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.6);" /> | <img src="./assets/card-view.png" alt="3D Card View Inspector" width="390" style="border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.6);" /> |
+| **✦ Lobby UI & Game Mode Selection**<br/>หน้าล็อบบี้เลือกโหมด PvP / PvE และคลังสำรับ | **✦ Interactive 3D Card Inspector**<br/>หมุนการ์ดดูมิติ แสงฟอยล์ และค่า Stat แบบเจาะลึก |
 
-| 🧪 Studio Customizer | ❄️ Cryo Sorceress (Rare) |
+| ⚔️ 3. Combat Phase (จังหวะการต่อสู้) | ✨ 4. Skill & Impact Effect (เอฟเฟกต์สกิล) |
 | :---: | :---: |
-| <img src="./assets/studio-ui.png" alt="Studio UI Drag and Drop" width="340" style="border-radius: 12px;" /> | <img src="./assets/card-rare.png" alt="Rare Card" width="340" style="border-radius: 12px;" /> |
-| **✦ Drag & Drop Studio Panel** | **✦ Crystalline Ice Frame** |
+| <img src="./assets/battle-clash.png" alt="Combat Phase" width="390" style="border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.6);" /> | <img src="./assets/skill-effect.png" alt="VFX Skill Effects" width="390" style="border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.6);" /> |
+| **✦ Attack & Defense Calculations**<br/>การสั่งโจมตี ท่าสวนกลับ และตัวเลขดาเมจบนสนาม | **✦ Hologram Magic & Particle VFX**<br/>แสงอัลติเมต ลำแสงเวทมนตร์ และอนุภาคแตกกระจาย |
 
 </div>
 
