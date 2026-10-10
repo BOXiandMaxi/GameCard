@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { chooseBotPlay, createBotMemory, observeBotPass, observeBotReveal, observeBotSwap } from './botAI';
+import type { BotMemory } from './botAI';
 
 export type GamePhase = 'deal' | 'select' | 'gamble_select' | 'reveal' | 'resolve' | 'evaluate' | 'gameover';
 
@@ -102,6 +104,7 @@ export type RoundResult = ReturnType<typeof calculateRound>;
 export type DetailCardContext = { kind: 'playerHand' | 'botHand' | 'board'; manaCost?: number };
 
 interface GameState {
+    botMemory: BotMemory;
     playerHP: number;
     botHP: number;
     playerHand: CardData[];
@@ -322,6 +325,7 @@ const getPassTurnUpdate = (state: GameState, passingSide: 'player' | 'bot'): Par
     }
 
     return {
+        botMemory: observeBotPass(state.botMemory),
         playerHand: newPlayerHand,
         botHand: newBotHand,
         playerHP: Math.min(100, finalPlayerHP),
@@ -357,6 +361,7 @@ const getPassTurnUpdate = (state: GameState, passingSide: 'player' | 'bot'): Par
 };
 
 export const useGameStore = create<GameState>((set, get) => ({
+    botMemory: createBotMemory(),
     playerHP: 100,
     botHP: 100,
     playerHand: [],
@@ -406,6 +411,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         const selectedTurns = [shuffledTurns[0], shuffledTurns[1]].sort();
 
         set({
+            botMemory: createBotMemory(),
             playerHP: 100,
             botHP: 100,
             playerHand: generateHand(),
@@ -460,64 +466,25 @@ export const useGameStore = create<GameState>((set, get) => ({
     },
 
     playTurn: () => {
-        const { phase, playerSelectedCardIndex, playerHand, botHand, activeField, turnCount, botMana, playerSilenced, botSilenced } = get();
+        const { phase, playerSelectedCardIndex, playerHand, botHand, playerSilenced, botSilenced } = get();
         if (phase !== 'select' || playerSelectedCardIndex === null) return;
 
         const state = get();
         const selectedCard = playerHand[playerSelectedCardIndex];
         if (!Number.isInteger(playerSelectedCardIndex) || !selectedCard || getCardManaCost(selectedCard, playerSilenced) > state.playerMana) return;
 
-        // Bot AI Selection - must be able to afford the card's mana cost
-        const affordableChoices = botHand
-            .map((card, index) => ({ card, index }))
-            .filter(item => getCardManaCost(item.card, botSilenced) <= botMana);
-
-        let botIndex = 0;
-
-        if (affordableChoices.length > 0) {
-            let bestScore = -Infinity;
-            affordableChoices.forEach(({ card, index }) => {
-                let score = card.power; // Base score is power
-
-                // 1. Field Advantage (Massive Bonus)
-                if (activeField && card.element === activeField) {
-                    score += 30; // Highly prioritize playing field-buffed cards
-                }
-
-                // 2. Absolute Elements (Secondary Priority)
-                if (card.element === 'light' || card.element === 'dark') {
-                    score += 5; // Light/Dark have flat advantages in neutral matchups
-                }
-
-                // 3. Unpredictability Variance
-                score += Math.random() * 15;
-
-                // 4. Early Game Strategy (Save high power cards)
-                if (turnCount <= 2 && card.power >= 80) {
-                    if (Math.random() < 0.75) {
-                        score -= 60;
-                    }
-                } else if (turnCount >= 4) {
-                    if (card.power >= 80) {
-                        score += 20;
-                    }
-                }
-
-                // 5. Bluffing / Mixing it up
-                if (Math.random() < 0.15) {
-                    score += (100 - card.power) * 0.5;
-                }
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    botIndex = index;
-                }
-            });
-        } else {
-            // Bot cannot afford any card: must discard a random card and take pass penalty
-            set(getPassTurnUpdate(get(), 'bot'));
+        // Deliberately construct an information boundary: selection/hidden cards,
+        // player guesses and the private future field schedule never enter the AI.
+        const choice = chooseBotPlay({ hand: botHand, opponentHandCount: playerHand.length,
+            botHP: state.botHP, playerHP: state.playerHP, botMana: state.botMana, playerMana: state.playerMana,
+            botPoisonTurns: state.botPoisonTurns, playerPoisonTurns: state.playerPoisonTurns,
+            botSilenced, playerSilenced, activeField: state.activeField, turnCount: state.turnCount,
+            memory: state.botMemory }, { cards: ALL_CARDS, cost: getCardManaCost, calculateRound });
+        if (!choice) {
+            set(getPassTurnUpdate(state, 'bot'));
             return;
         }
+        const botIndex = choice.index;
 
         const playerCard = playerHand[playerSelectedCardIndex];
         const botCard = botHand[botIndex];
@@ -545,12 +512,7 @@ export const useGameStore = create<GameState>((set, get) => ({
             nextPhase = 'gamble_select';
         }
 
-        // If bot has active gamble, bot guesses autonomously without prompting player
-        let nextBotGamble: ElementType | null = null;
-        if (botCard.skill === 'gamble' && !botSilenced) {
-            const elements: ElementType[] = ['fire', 'water', 'earth', 'wind', 'light', 'dark'];
-            nextBotGamble = elements[Math.floor(Math.random() * elements.length)];
-        }
+        const nextBotGamble = choice.guess;
 
         set({
             playerHand: newPlayerHand,
@@ -590,7 +552,8 @@ export const useGameStore = create<GameState>((set, get) => ({
             newActiveField = state.boardBotCard!.element;
         }
 
-        set({ phase: 'resolve', animationPhase: 'revealing', activeField: newActiveField });
+        set({ phase: 'resolve', animationPhase: 'revealing', activeField: newActiveField,
+            botMemory: state.boardPlayerCard ? observeBotReveal(state.botMemory, state.boardPlayerCard, state.turnCount, state.activeField) : state.botMemory });
     },
 
     finishAnimation: () => {
@@ -735,6 +698,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
 
         set({
+            botMemory: (pSkill === 'soul_swap') !== (bSkill === 'soul_swap')
+                ? observeBotSwap(state.botMemory, state.turnCount) : state.botMemory,
             playerHP: Math.min(100, Math.max(0, newPlayerHP)),
             botHP: Math.min(100, Math.max(0, newBotHP)),
             message: turnMsg,

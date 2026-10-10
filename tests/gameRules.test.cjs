@@ -16,7 +16,11 @@ function load(file, stubs = {}) {
     loaded.filename = filename;
     loaded.paths = Module._nodeModulePaths(path.dirname(filename));
     const base = loaded.require.bind(loaded);
-    loaded.require = id => Object.hasOwn(stubs, id) ? stubs[id] : base(id);
+    loaded.require = id => {
+        if (Object.hasOwn(stubs, id)) return stubs[id];
+        const relative = id.startsWith('.') ? path.resolve(path.dirname(filename), id + '.ts') : null;
+        return relative && fs.existsSync(relative) ? load(path.relative(path.resolve(__dirname, '..'), relative), stubs) : base(id);
+    };
     loaded._compile(out.outputText, filename);
     return loaded.exports;
 }
