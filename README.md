@@ -39,3 +39,30 @@
 1. ติดตั้ง Dependencies:
    ```bash
    npm install
+
+   <!-- ================= PREVIEW SHOWCASE ================= -->
+## 📸 Visual Showcase & Gallery
+
+<div align="center">
+
+### ⚡ Live Card Interaction (Preview)
+<!-- แนะนำใช้ไฟล์ .gif หรือ .webp สั้นๆ แสดงการเอียง 3D และแสงฟอยล์ -->
+<img src="./assets/demo-interaction.gif" alt="Interactive 3D Demo" width="750" style="border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);" />
+
+<br/><br/>
+
+### 🔮 Card Showcase & Studio UI
+
+| 🐉 Mythic Wyrm (Foil) | ⚔️ Legendary Paladin |
+| :---: | :---: |
+| <img src="./assets/card-mythic.png" alt="Mythic Card" width="340" style="border-radius: 12px;" /> | <img src="./assets/card-legendary.png" alt="Legendary Card" width="340" style="border-radius: 12px;" /> |
+| **✦ Cosmic Hologram Effect** | **✦ Golden Border & Specular Glare** |
+
+| 🧪 Studio Customizer | ❄️ Cryo Sorceress (Rare) |
+| :---: | :---: |
+| <img src="./assets/studio-ui.png" alt="Studio UI Drag and Drop" width="340" style="border-radius: 12px;" /> | <img src="./assets/card-rare.png" alt="Rare Card" width="340" style="border-radius: 12px;" /> |
+| **✦ Drag & Drop Studio Panel** | **✦ Crystalline Ice Frame** |
+
+</div>
+
+---
