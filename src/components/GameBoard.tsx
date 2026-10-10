@@ -9,6 +9,8 @@ import type { CardData, ElementType } from '../store/gameStore';
 import { useSpring, animated } from '@react-spring/three';
 
 const Hand = ({ isPlayer, cards, selectedIdx, onSelect, isDealing = false, deckPosition }: { isPlayer: boolean, cards: CardData[], selectedIdx?: number | null, onSelect?: (i: number) => void, isDealing?: boolean, deckPosition: [number, number, number] }) => {
+    const { playerSilenced, botSilenced } = useGameStore();
+    const silenced = isPlayer ? playerSilenced : botSilenced;
     const startX = -((cards.length - 1) * 2.5) / 2;
     // The group is positioned at [0, 4, 5] for player and [0, 4, -5] for bot.
     // To make cards start at the *world* center [0, 0, 0], we offset them in the opposite direction.
@@ -33,13 +35,13 @@ const Hand = ({ isPlayer, cards, selectedIdx, onSelect, isDealing = false, deckP
                         isSelectable={isPlayer}
                         isSelected={isSelected}
                         onClick={() => isPlayer && onSelect && onSelect(i)}
-                        onRightClick={() => useGameStore.getState().setDetailCard(card)}
+                        onRightClick={isPlayer ? () => useGameStore.getState().setDetailCard(card, { kind: 'playerHand' }) : undefined}
                         isDealing={isDealing}
                         dealIndex={i}
                         deckPosition={deckPosition}
                         parentGroupOffset={groupPos as [number, number, number]}
                         rarity={card.rarity || getCardRarity(card.power)}
-                        manaCost={getCardManaCost(card)}
+                        manaCost={getCardManaCost(card, silenced)}
                         skill={card.skill}
                     />
                 );
@@ -49,7 +51,7 @@ const Hand = ({ isPlayer, cards, selectedIdx, onSelect, isDealing = false, deckP
 };
 
 const Board = () => {
-    const { boardPlayerCard, boardBotCard, phase, animationPhase, roundWinner } = useGameStore();
+    const { boardPlayerCard, boardBotCard, phase, animationPhase, roundWinner, boardPlayerManaCost, boardBotManaCost } = useGameStore();
 
     const isRevealed = phase === 'resolve' || phase === 'evaluate' || phase === 'gameover';
     const isRevealEffectsActive = phase === 'resolve' && animationPhase === 'revealing';
@@ -64,8 +66,9 @@ const Board = () => {
                         rotation={[-Math.PI / 2, 0, 0]}
                         isFlipped={isRevealed}
                         isLoser={phase === 'evaluate' && (roundWinner === 'bot' || roundWinner === 'draw')}
+                        onRightClick={() => useGameStore.getState().setDetailCard(boardPlayerCard, { kind: 'board', manaCost: boardPlayerManaCost ?? getCardManaCost(boardPlayerCard) })}
                         rarity={boardPlayerCard.rarity || getCardRarity(boardPlayerCard.power)}
-                        manaCost={getCardManaCost(boardPlayerCard)}
+                        manaCost={boardPlayerManaCost ?? getCardManaCost(boardPlayerCard)}
                         skill={boardPlayerCard.skill}
                     />
                     {phase === 'reveal' && <DustRing position={[0, 0.1, 2]} />}
@@ -80,8 +83,9 @@ const Board = () => {
                         rotation={[-Math.PI / 2, 0, Math.PI]} // rotate to face player from opposite side
                         isFlipped={isRevealed}
                         isLoser={phase === 'evaluate' && (roundWinner === 'player' || roundWinner === 'draw')}
+                        onRightClick={isRevealed ? () => useGameStore.getState().setDetailCard(boardBotCard, { kind: 'board', manaCost: boardBotManaCost ?? getCardManaCost(boardBotCard) }) : undefined}
                         rarity={boardBotCard.rarity || getCardRarity(boardBotCard.power)}
-                        manaCost={getCardManaCost(boardBotCard)}
+                        manaCost={boardBotManaCost ?? getCardManaCost(boardBotCard)}
                         skill={boardBotCard.skill}
                     />
                     {phase === 'reveal' && <DustRing position={[0, 0.1, -2]} />}

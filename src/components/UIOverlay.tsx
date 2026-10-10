@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useGameStore, getCardManaCost } from '../store/gameStore';
+import { useGameStore, getCardManaCost, calculateRound } from '../store/gameStore';
 import AncientButton from './AncientButton';
 
 export default function UIOverlay() {
@@ -10,7 +10,7 @@ export default function UIOverlay() {
         passTurn, playerHand
     } = useGameStore();
 
-    const canPlayAnyCard = playerHand.some(card => getCardManaCost(card) <= playerMana);
+    const canPlayAnyCard = playerHand.some(card => getCardManaCost(card, playerSilenced) <= playerMana);
     const [showSoulSwap, setShowSoulSwap] = useState(false);
 
     // Initialize game on first mount
@@ -54,26 +54,11 @@ export default function UIOverlay() {
                             const aField = s2.activeField;
 
                             if (pCard && bCard) {
-                                const pSilenced = s2.playerSilenced;
-                                const bSilenced = s2.botSilenced;
-
-                                let pBase = pCard.power + (!pSilenced && pCard.skill === 'pierce' ? 10 : 0);
-                                let bBase = bCard.power + (!bSilenced && bCard.skill === 'pierce' ? 10 : 0);
-                                if (!pSilenced && pCard.skill === 'mimic') pBase = bCard.power;
-                                if (!bSilenced && bCard.skill === 'mimic') bBase = pCard.power;
-
-                                const pHasPierce = !pSilenced && pCard.skill === 'pierce';
-                                const bHasPierce = !bSilenced && bCard.skill === 'pierce';
-
-                                let pp = pBase + (pCard.element === aField && !bHasPierce ? 25 : 0);
-                                let bp = bBase + (bCard.element === aField && !pHasPierce ? 25 : 0);
-
-                                let pGambleSuccess = !pSilenced && pCard.skill === 'gamble' && s2.playerGambleGuess === bCard.element;
-                                let bGambleSuccess = !bSilenced && bCard.skill === 'gamble' && s2.botGambleGuess === pCard.element;
-                                let pAbsorb = pGambleSuccess ? bp : 0;
-                                let bAbsorb = bGambleSuccess ? pp : 0;
-                                if (pGambleSuccess) { pp += pAbsorb; bp = 0; }
-                                if (bGambleSuccess) { bp += bAbsorb; pp = 0; }
+                                const { pBase, bBase, pp, bp } = calculateRound({
+                                    playerCard: pCard, botCard: bCard, field: aField,
+                                    playerSilenced: s2.playerSilenced, botSilenced: s2.botSilenced,
+                                    playerGuess: s2.playerGambleGuess, botGuess: s2.botGambleGuess
+                                });
 
                                 const isCounterAttack = (pBase <= bBase && pp > bp) || (bBase <= pBase && bp > pp);
                                 if (isCounterAttack) {
@@ -100,13 +85,16 @@ export default function UIOverlay() {
                     else if (state.botHP > state.playerHP) resultMsg = "คุณเป็นฝ่ายพ่ายแพ้!";
                     else resultMsg = "ผลการต่อสู้เสมอกัน!";
 
-                    useGameStore.setState({ phase: 'gameover', resultMessage: resultMsg, boardPlayerCard: null, boardBotCard: null });
+                    useGameStore.setState({ phase: 'gameover', resultMessage: resultMsg, boardPlayerCard: null, boardBotCard: null, boardPlayerManaCost: null, boardBotManaCost: null, roundResult: null });
                 } else {
                     applyPendingField();
                     useGameStore.setState({
                         phase: 'select',
                         boardPlayerCard: null,
                         boardBotCard: null,
+                        boardPlayerManaCost: null,
+                        boardBotManaCost: null,
+                        roundResult: null,
                         message: 'เลือกการ์ดใบถัดไปเพื่อเริ่มการต่อสู้'
                     });
                 }

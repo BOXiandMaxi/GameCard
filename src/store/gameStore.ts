@@ -23,9 +23,9 @@ export interface CardData {
     skill?: SkillType;
 }
 
-export const getCardManaCost = (card: CardData): number => {
-    if (card.skill === 'no_mana') return 0;
-    if (card.skill === 'soul_swap') return 10;
+export const getCardManaCost = (card: CardData, silenced = false): number => {
+    if (!silenced && card.skill === 'no_mana') return 0;
+    if (!silenced && card.skill === 'soul_swap') return 8;
     const rarity = card.rarity || getCardRarity(card.power);
     switch (rarity) {
         case 'normal': return 1;
@@ -35,6 +35,71 @@ export const getCardManaCost = (card: CardData): number => {
         default: return 1;
     }
 };
+
+export interface RoundInput {
+    playerCard: CardData;
+    botCard: CardData;
+    field: ElementType | null;
+    playerSilenced?: boolean;
+    botSilenced?: boolean;
+    playerGuess?: ElementType | null;
+    botGuess?: ElementType | null;
+}
+
+export const getElementBonus = (own: ElementType, enemy: ElementType): number => {
+    if ((own === 'light' || own === 'dark') && enemy !== 'light' && enemy !== 'dark') return 10;
+    const counters: Partial<Record<ElementType, ElementType>> = { water: 'fire', fire: 'earth', earth: 'wind', wind: 'water' };
+    return counters[own] === enemy ? 20 : 0;
+};
+
+// Shared by the store, animation direction and animation timing. All damage amounts
+// are snapshots: reflection never reflects reflection or contributes to healing.
+export const calculateRound = (input: RoundInput) => {
+    const { playerCard: pc, botCard: bc, field } = input;
+    const pSkill = input.playerSilenced ? 'none' : (pc.skill || 'none');
+    const bSkill = input.botSilenced ? 'none' : (bc.skill || 'none');
+    const basePower = (own: CardData, enemy: CardData, skill: SkillType) => {
+        let power = own.power;
+        if (skill === 'no_mana') power = Math.max(0, power - 15);
+        if (skill === 'mimic') power += Math.min(15, Math.max(0, enemy.power - own.power));
+        if (skill === 'pierce') power += 10;
+        return power;
+    };
+    const pBase = basePower(pc, bc, pSkill);
+    const bBase = basePower(bc, pc, bSkill);
+    const pFieldBonus = pc.element === field && bSkill !== 'pierce' ? 25 : 0;
+    const bFieldBonus = bc.element === field && pSkill !== 'pierce' ? 25 : 0;
+    const pElementBonus = getElementBonus(pc.element, bc.element);
+    const bElementBonus = getElementBonus(bc.element, pc.element);
+    let pp = pBase + pFieldBonus + pElementBonus;
+    let bp = bBase + bFieldBonus + bElementBonus;
+    const pGambleSuccess = pSkill === 'gamble' && input.playerGuess === bc.element;
+    const bGambleSuccess = bSkill === 'gamble' && input.botGuess === pc.element;
+    const pAbsorbed = pGambleSuccess && !bGambleSuccess ? Math.min(30, Math.floor(bp / 2)) : 0;
+    const bAbsorbed = bGambleSuccess && !pGambleSuccess ? Math.min(30, Math.floor(pp / 2)) : 0;
+    pp += pAbsorbed - bAbsorbed;
+    bp += bAbsorbed - pAbsorbed;
+    const winner: 'player' | 'bot' | 'draw' = pp > bp ? 'player' : bp > pp ? 'bot' : 'draw';
+    const defend = (damage: number, defender: CardData, attackerSkill: SkillType) =>
+        defender.element === field && attackerSkill !== 'pierce' ? Math.ceil(damage / 2) : damage;
+    const pDirect = winner === 'bot' ? 0 : defend(winner === 'draw' ? 10 : pp - bp, bc, pSkill);
+    const bDirect = winner === 'player' ? 0 : defend(winner === 'draw' ? 10 : bp - pp, pc, bSkill);
+    const pReflected = pSkill === 'reflect' ? Math.floor(bDirect * 0.3) : 0;
+    const bReflected = bSkill === 'reflect' ? Math.floor(pDirect * 0.3) : 0;
+    const healing = (skill: SkillType, won: boolean, dealt: number, received: number) => {
+        if (skill === 'heal') return Math.min(30, won ? dealt : Math.floor(received / 2));
+        if (skill === 'lifesteal') return won ? dealt : Math.floor(received / 2);
+        return 0;
+    };
+    const pHealAmount = healing(pSkill, winner === 'player', pDirect, bDirect);
+    const bHealAmount = healing(bSkill, winner === 'bot', bDirect, pDirect);
+    return { pp, bp, pBase, bBase, pSkill, bSkill, pFieldBonus, bFieldBonus, pElementBonus, bElementBonus,
+        pGambleSuccess, bGambleSuccess, pAbsorbed, bAbsorbed, winner, pDirect, bDirect,
+        pReflected, bReflected, pHealAmount, bHealAmount };
+};
+
+export type RoundResult = ReturnType<typeof calculateRound>;
+export type DetailCardContext = { kind: 'playerHand' | 'botHand' | 'board'; manaCost?: number };
 
 interface GameState {
     playerHP: number;
@@ -58,6 +123,10 @@ interface GameState {
     isSettingsOpen: boolean;
     isCollectionOpen: boolean;
     selectedDetailCard: CardData | null;
+    detailCardContext: DetailCardContext | null;
+    boardPlayerManaCost: number | null;
+    boardBotManaCost: number | null;
+    roundResult: RoundResult | null;
 
     playerMana: number;
     botMana: number;
@@ -75,7 +144,7 @@ interface GameState {
     setAppState: (state: 'menu' | 'playing') => void;
     toggleSettings: () => void;
     toggleCollection: () => void;
-    setDetailCard: (card: CardData | null) => void;
+    setDetailCard: (card: CardData | null, context?: DetailCardContext) => void;
     selectCard: (index: number) => void;
     playTurn: () => void;
     revealCards: () => void;
@@ -200,6 +269,93 @@ const generateHand = () => {
     return shuffleArray(finalHand);
 };
 
+const getPassTurnUpdate = (state: GameState, passingSide: 'player' | 'bot'): Partial<GameState> => {
+    // The passing side takes the same 10 HP penalty; no cards enter combat.
+    const newPlayerHP = passingSide === 'player' ? Math.max(0, state.playerHP - 10) : state.playerHP;
+
+    // Randomly discard 1 card from player and 1 from bot to keep hand sizes in sync for the remaining turns
+    const newPlayerHand = [...state.playerHand];
+    if (newPlayerHand.length > 0) {
+        newPlayerHand.splice(Math.floor(Math.random() * newPlayerHand.length), 1);
+    }
+
+    const newBotHand = [...state.botHand];
+    if (newBotHand.length > 0) {
+        newBotHand.splice(Math.floor(Math.random() * newBotHand.length), 1);
+    }
+
+    // Apply Poison ticks if any
+    let newPPoison = state.playerPoisonTurns;
+    let finalPlayerHP = newPlayerHP;
+    if (newPPoison > 0) {
+        finalPlayerHP = Math.max(0, finalPlayerHP - 10);
+        newPPoison--;
+    }
+    let newBPoison = state.botPoisonTurns;
+    let finalBotHP = passingSide === 'bot' ? Math.max(0, state.botHP - 10) : state.botHP;
+    if (newBPoison > 0) {
+        finalBotHP = Math.max(0, finalBotHP - 10);
+        newBPoison--;
+    }
+
+    // Regen mana
+    const newPlayerMana = Math.min(10, state.playerMana + 2);
+    const newBotMana = Math.min(10, state.botMana + 2);
+
+    // Turn management
+    const nextTurn = state.turnCount + 1;
+    let isGameOver = false;
+    let resultMsg = "";
+
+    if (nextTurn > 5 || finalPlayerHP <= 0 || finalBotHP <= 0) {
+        isGameOver = true;
+        if (finalPlayerHP > finalBotHP) resultMsg = "คุณเป็นฝ่ายชนะ!";
+        else if (finalBotHP > finalPlayerHP) resultMsg = "คุณเป็นฝ่ายพ่ายแพ้!";
+        else resultMsg = "ผลการต่อสู้เสมอกัน!";
+    }
+
+    // Natural field resets to null unless next turn is a designated field turn
+    let nextField: ElementType | null = null;
+    if (!isGameOver && state.fieldTurns.includes(nextTurn)) {
+        const elements: ElementType[] = ['fire', 'water', 'earth', 'wind', 'light', 'dark'];
+        nextField = elements[Math.floor(Math.random() * elements.length)];
+    }
+
+    return {
+        playerHand: newPlayerHand,
+        botHand: newBotHand,
+        playerHP: Math.min(100, finalPlayerHP),
+        botHP: Math.min(100, finalBotHP),
+        playerMana: newPlayerMana,
+        botMana: newBotMana,
+        playerPoisonTurns: newPPoison,
+        botPoisonTurns: newBPoison,
+        playerSilenced: false,
+        botSilenced: false,
+        turnCount: nextTurn,
+        phase: isGameOver ? 'gameover' : 'select',
+        resultMessage: resultMsg,
+        activeField: nextField,
+        playerSelectedCardIndex: null,
+        botSelectedCardIndex: null,
+        boardPlayerCard: null,
+        boardBotCard: null,
+        playerGambleGuess: null,
+        botGambleGuess: null,
+        animationPhase: 'none',
+        roundWinner: null,
+        pendingField: null,
+        lastPlayerSkill: 'none',
+        lastBotSkill: 'none',
+        boardPlayerManaCost: null,
+        boardBotManaCost: null,
+        roundResult: null,
+        message: passingSide === 'player'
+            ? 'ผู้เล่นข้ามเทิร์น! เสีย HP บทลงโทษ 10 หน่วย และสุ่มทิ้งการ์ด 1 ใบ'
+            : 'บอทข้ามเทิร์น! เสีย HP บทลงโทษ 10 หน่วย และสุ่มทิ้งการ์ด 1 ใบ',
+    };
+};
+
 export const useGameStore = create<GameState>((set, get) => ({
     playerHP: 100,
     botHP: 100,
@@ -222,6 +378,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     isSettingsOpen: false,
     isCollectionOpen: false,
     selectedDetailCard: null,
+    detailCardContext: null,
+    boardPlayerManaCost: null,
+    boardBotManaCost: null,
+    roundResult: null,
 
     playerMana: 3,
     botMana: 3,
@@ -237,7 +397,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     setAppState: (state) => set({ appState: state }),
     toggleSettings: () => set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
     toggleCollection: () => set((state) => ({ isCollectionOpen: !state.isCollectionOpen })),
-    setDetailCard: (card) => set({ selectedDetailCard: card }),
+    setDetailCard: (card, context) => set({ selectedDetailCard: card, detailCardContext: card ? (context || null) : null }),
 
     initGame: () => {
         // Pick 2 random unique turns between 2 and 5
@@ -271,6 +431,9 @@ export const useGameStore = create<GameState>((set, get) => ({
             botSilenced: false,
             lastPlayerSkill: 'none',
             lastBotSkill: 'none',
+            boardPlayerManaCost: null,
+            boardBotManaCost: null,
+            roundResult: null,
             playerGambleGuess: null,
             botGambleGuess: null,
         });
@@ -281,99 +444,35 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (state.phase !== 'select') return;
         
         const card = state.playerHand[index];
-        if (getCardManaCost(card) > state.playerMana) {
+        if (!card || !Number.isInteger(index) || getCardManaCost(card, state.playerSilenced) > state.playerMana) {
             // Cannot afford this card
             return;
         }
 
-        set({ playerSelectedCardIndex: index, message: 'Card selected. Waiting for battle...', boardPlayerCard: null });
+        set({ playerSelectedCardIndex: index, message: 'Card selected. Waiting for battle...', boardPlayerCard: null, boardPlayerManaCost: null, roundResult: null });
     },
 
     passTurn: () => {
         const state = get();
         if (state.phase !== 'select') return;
 
-        // Player takes 10 penalty damage
-        const newPlayerHP = Math.max(0, state.playerHP - 10);
-        
-        // Randomly discard 1 card from player and 1 from bot to keep hand sizes in sync for the remaining turns
-        const newPlayerHand = [...state.playerHand];
-        if (newPlayerHand.length > 0) {
-            newPlayerHand.splice(Math.floor(Math.random() * newPlayerHand.length), 1);
-        }
-
-        const newBotHand = [...state.botHand];
-        if (newBotHand.length > 0) {
-            newBotHand.splice(Math.floor(Math.random() * newBotHand.length), 1);
-        }
-
-        // Apply Poison ticks if any
-        let newPPoison = state.playerPoisonTurns;
-        let finalPlayerHP = newPlayerHP;
-        if (newPPoison > 0) {
-            finalPlayerHP = Math.max(0, finalPlayerHP - 10);
-            newPPoison--;
-        }
-        let newBPoison = state.botPoisonTurns;
-        let finalBotHP = state.botHP;
-        if (newBPoison > 0) {
-            finalBotHP = Math.max(0, finalBotHP - 10);
-            newBPoison--;
-        }
-
-        // Regen mana
-        const newPlayerMana = Math.min(10, state.playerMana + 2);
-        const newBotMana = Math.min(10, state.botMana + 2);
-
-        // Turn management
-        let nextTurn = state.turnCount + 1;
-        let isGameOver = false;
-        let resultMsg = "";
-
-        if (nextTurn > 5 || finalPlayerHP <= 0 || finalBotHP <= 0) {
-            isGameOver = true;
-            if (finalPlayerHP > finalBotHP) resultMsg = "คุณเป็นฝ่ายชนะ!";
-            else if (finalBotHP > finalPlayerHP) resultMsg = "คุณเป็นฝ่ายพ่ายแพ้!";
-            else resultMsg = "ผลการต่อสู้เสมอกัน!";
-        }
-
-        // Natural field resets to null unless next turn is a designated field turn
-        let nextField: ElementType | null = null;
-        if (!isGameOver && state.fieldTurns.includes(nextTurn)) {
-            const elements: ElementType[] = ['fire', 'water', 'earth', 'wind', 'light', 'dark'];
-            nextField = elements[Math.floor(Math.random() * elements.length)];
-        }
-
-        set({
-            playerHand: newPlayerHand,
-            botHand: newBotHand,
-            playerHP: Math.min(100, finalPlayerHP),
-            botHP: Math.min(100, finalBotHP),
-            playerMana: newPlayerMana,
-            botMana: newBotMana,
-            playerPoisonTurns: newPPoison,
-            botPoisonTurns: newBPoison,
-            playerSilenced: false,
-            botSilenced: false,
-            turnCount: nextTurn,
-            phase: isGameOver ? 'gameover' : 'select',
-            resultMessage: resultMsg,
-            activeField: nextField,
-            message: 'ผู้เล่นข้ามเทิร์น! เสีย HP บทลงโทษ 10 หน่วย และสุ่มทิ้งการ์ด 1 ใบ',
-        });
+        set(getPassTurnUpdate(state, 'player'));
     },
 
     playTurn: () => {
         const { phase, playerSelectedCardIndex, playerHand, botHand, activeField, turnCount, botMana, playerSilenced, botSilenced } = get();
         if (phase !== 'select' || playerSelectedCardIndex === null) return;
 
+        const state = get();
+        const selectedCard = playerHand[playerSelectedCardIndex];
+        if (!Number.isInteger(playerSelectedCardIndex) || !selectedCard || getCardManaCost(selectedCard, playerSilenced) > state.playerMana) return;
+
         // Bot AI Selection - must be able to afford the card's mana cost
         const affordableChoices = botHand
             .map((card, index) => ({ card, index }))
-            .filter(item => getCardManaCost(item.card) <= botMana);
+            .filter(item => getCardManaCost(item.card, botSilenced) <= botMana);
 
         let botIndex = 0;
-        let botPasses = false;
 
         if (affordableChoices.length > 0) {
             let bestScore = -Infinity;
@@ -416,22 +515,22 @@ export const useGameStore = create<GameState>((set, get) => ({
             });
         } else {
             // Bot cannot afford any card: must discard a random card and take pass penalty
-            botPasses = true;
-            botIndex = Math.floor(Math.random() * botHand.length);
+            set(getPassTurnUpdate(get(), 'bot'));
+            return;
         }
 
         const playerCard = playerHand[playerSelectedCardIndex];
         const botCard = botHand[botIndex];
 
         // Deduct Mana immediately upon playing
-        const pManaCost = getCardManaCost(playerCard);
-        const bManaCost = getCardManaCost(botCard);
+        const pManaCost = getCardManaCost(playerCard, playerSilenced);
+        const bManaCost = getCardManaCost(botCard, botSilenced);
         
         let newPlayerMana = get().playerMana;
         let newBotMana = get().botMana;
 
         if (newPlayerMana >= pManaCost) newPlayerMana -= pManaCost;
-        if (!botPasses && newBotMana >= bManaCost) newBotMana -= bManaCost;
+        if (newBotMana >= bManaCost) newBotMana -= bManaCost;
 
         // Remove from hand
         const newPlayerHand = [...playerHand];
@@ -462,6 +561,9 @@ export const useGameStore = create<GameState>((set, get) => ({
             botSelectedCardIndex: null,
             boardPlayerCard: playerCard,
             boardBotCard: botCard,
+            boardPlayerManaCost: pManaCost,
+            boardBotManaCost: bManaCost,
+            roundResult: null,
             phase: nextPhase,
             botGambleGuess: nextBotGamble,
             animationPhase: 'none',
@@ -564,171 +666,37 @@ export const useGameStore = create<GameState>((set, get) => ({
         const lastPlayerSkill = pSkill;
         const lastBotSkill = bSkill;
 
-        // Calculate Pre-Clash Power
-        let pp = pc.power;
-        let bp = bc.power;
-
-        // Mimic Power: copies opponent's card base power
-        if (pSkill === 'mimic') {
-            pp = bc.power;
-            turnMsg += `ผู้เล่นเลียนแบบพลังการ์ดศัตรู (${bc.power})! `;
-        }
-        if (bSkill === 'mimic') {
-            bp = pc.power;
-            turnMsg += `ศัตรูเลียนแบบพลังการ์ดผู้เล่น (${pc.power})! `;
-        }
-
-        // Field Buffs
-        let pHasFieldBuff = pc.element === currentField;
-        let bHasFieldBuff = bc.element === currentField;
-
-        // Pierce
-        if (pSkill === 'pierce') {
-            bHasFieldBuff = false; // Ignore opponent's field buff
-            pp += 10;
-            turnMsg += "ผู้เล่นใช้เจาะเกราะ (+10 พลัง และทะลวงสนามศัตรู)! ";
-        }
-        if (bSkill === 'pierce') {
-            pHasFieldBuff = false; // Ignore opponent's field buff
-            bp += 10;
-            turnMsg += "ศัตรูใช้เจาะเกราะ (+10 พลัง และทะลวงสนามผู้เล่น)! ";
-        }
-
-        if (pHasFieldBuff) pp += 25;
-        if (bHasFieldBuff) bp += 25;
-
-        // PHASE 3: Clash & Gamble
-        let pGambleSuccess = pSkill === 'gamble' && state.playerGambleGuess === bc.element;
-        let bGambleSuccess = bSkill === 'gamble' && state.botGambleGuess === pc.element;
-
-        let pAbsorbedPower = pGambleSuccess ? bp : 0;
-        let bAbsorbedPower = bGambleSuccess ? pp : 0;
-
-        if (pGambleSuccess) {
-            turnMsg += "ผู้เล่นทายธาตุถูก! ดูดพลังศัตรูมาเป็น 0 ";
-            pp += pAbsorbedPower;
-            bp = 0;
-        }
-        if (bGambleSuccess) {
-            turnMsg += "ศัตรูทายธาตุถูก! ดูดพลังผู้เล่นมาเป็น 0 ";
-            bp += bAbsorbedPower;
-            pp = 0;
-        }
-
-        // Damage Calculation
-        const calcBaseDamage = (attackerP: number, defenderP: number) => Math.max(0, attackerP - defenderP);
-
-        // Apply Field Defense: Halve incoming damage unless attacker has pierce
-        const calcDamage = (baseDamage: number, defenderElement: ElementType, attackerHasPierce: boolean) => {
-            if (defenderElement === currentField && !attackerHasPierce) return Math.ceil(baseDamage / 2);
-            return baseDamage;
-        };
-
-        const hasAdvantage = (el1: ElementType, el2: ElementType) => {
-            if (el1 === 'water' && el2 === 'fire') return true;
-            if (el1 === 'wind' && el2 === 'water') return true;
-            if (el1 === 'earth' && el2 === 'wind') return true;
-            if (el1 === 'fire' && el2 === 'earth') return true;
-            return false;
-        };
-
-        const isAbsolute = (el: ElementType) => el === 'light' || el === 'dark';
-
-        let winner: 'player' | 'bot' | 'draw' = 'draw';
-        let pDamageDealt = 0;
-        let bDamageDealt = 0;
-
-        let reason = "";
-
-        if (pp > bp) {
-            pDamageDealt = calcDamage(pp - bp, bc.element, pSkill === 'pierce');
-            winner = 'player';
-            reason = "ผู้เล่นมีพลังโจมตีสูงกว่า";
-        } else if (bp > pp) {
-            bDamageDealt = calcDamage(bp - pp, pc.element, bSkill === 'pierce');
-            winner = 'bot';
-            reason = "ศัตรูมีพลังโจมตีสูงกว่า";
-        } else {
-            // Power is equal, check elemental advantages
-            if (isAbsolute(pc.element) && !isAbsolute(bc.element)) {
-                pDamageDealt = calcDamage(20, bc.element, pSkill === 'pierce');
-                winner = 'player';
-                reason = "ผู้เล่นชนะด้วยธาตุศักดิ์สิทธิ์ (แสง/มืด)";
-            } else if (isAbsolute(bc.element) && !isAbsolute(pc.element)) {
-                bDamageDealt = calcDamage(20, pc.element, bSkill === 'pierce');
-                winner = 'bot';
-                reason = "ศัตรูชนะด้วยธาตุศักดิ์สิทธิ์ (แสง/มืด)";
-            } else if (hasAdvantage(pc.element, bc.element)) {
-                pDamageDealt = calcDamage(10, bc.element, pSkill === 'pierce');
-                winner = 'player';
-                reason = "ผู้เล่นชนะด้วยการแพ้ชนะทางธาตุ";
-            } else if (hasAdvantage(bc.element, pc.element)) {
-                bDamageDealt = calcDamage(10, pc.element, bSkill === 'pierce');
-                winner = 'bot';
-                reason = "ศัตรูชนะด้วยการแพ้ชนะทางธาตุ";
-            } else {
-                pDamageDealt = 10;
-                bDamageDealt = 10;
-                winner = 'draw';
-                reason = "พลังและธาตุเสมอกัน";
-            }
-        }
-
-        if (winner === 'player') turnMsg += `${reason}! ศัตรูโดนดาเมจ ${pDamageDealt} หน่วย `;
-        else if (winner === 'bot') turnMsg += `${reason}! ผู้เล่นโดนดาเมจ ${bDamageDealt} หน่วย `;
-        else turnMsg += `เสมอ! โดนดาเมจฝั่งละ 10 หน่วย `;
-
-        // PHASE 4: Post-Damage Skills (Reflect, Lifesteal, Heal)
-        let pFinalDamageTaken = bDamageDealt;
-        let bFinalDamageTaken = pDamageDealt;
-
-        // Reflect
-        if (winner === 'bot' && pSkill === 'reflect') {
-            const reflected = Math.floor(pFinalDamageTaken * 0.3);
-            bFinalDamageTaken += reflected;
-            turnMsg += `ผู้เล่นสะท้อนดาเมจกลับไป ${reflected} หน่วย! `;
-        }
-        if (winner === 'player' && bSkill === 'reflect') {
-            const reflected = Math.floor(bFinalDamageTaken * 0.3);
-            pFinalDamageTaken += reflected;
-            turnMsg += `ศัตรูสะท้อนดาเมจกลับมา ${reflected} หน่วย! `;
-        }
-
-        // Apply final damage
-        newPlayerHP -= pFinalDamageTaken;
-        newBotHP -= bFinalDamageTaken;
-
-        // Lifesteal & Heal
-        if (pSkill === 'lifesteal') {
-            const healAmount = winner === 'player' ? pDamageDealt : Math.floor(bDamageDealt / 2);
-            newPlayerHP += healAmount;
-            turnMsg += `ผู้เล่นดูดเลือดฟื้นฟู +${healAmount} HP! `;
-        }
-        if (bSkill === 'lifesteal') {
-            const healAmount = winner === 'bot' ? bDamageDealt : Math.floor(pDamageDealt / 2);
-            newBotHP += healAmount;
-            turnMsg += `ศัตรูดูดเลือดฟื้นฟู +${healAmount} HP! `;
-        }
-
-        if (pSkill === 'heal') {
-            const healAmount = winner === 'player' ? pDamageDealt : bDamageDealt;
-            newPlayerHP += healAmount;
-            turnMsg += `ผู้เล่นฟื้นฟูพลังชีวิต +${healAmount} HP! `;
-        }
-        if (bSkill === 'heal') {
-            const healAmount = winner === 'bot' ? bDamageDealt : pDamageDealt;
-            newBotHP += healAmount;
-            turnMsg += `ศัตรูฟื้นฟูพลังชีวิต +${healAmount} HP! `;
-        }
+        const round = calculateRound({ playerCard: pc, botCard: bc, field: currentField,
+            playerSilenced: state.playerSilenced, botSilenced: state.botSilenced,
+            playerGuess: state.playerGambleGuess, botGuess: state.botGambleGuess });
+        const { winner, pDirect, bDirect, pReflected, bReflected, pHealAmount, bHealAmount } = round;
+        if (round.pElementBonus) turnMsg += `ผู้เล่นได้โบนัสธาตุ +${round.pElementBonus}! `;
+        if (round.bElementBonus) turnMsg += `ศัตรูได้โบนัสธาตุ +${round.bElementBonus}! `;
+        if (round.pGambleSuccess && round.bGambleSuccess) turnMsg += 'ทั้งสองฝ่ายทายธาตุถูก! การดูดพลังหักล้างกัน ';
+        else if (round.pAbsorbed) turnMsg += `ผู้เล่นทายถูก! ดูดพลัง ${round.pAbsorbed} หน่วย `;
+        else if (round.bAbsorbed) turnMsg += `ศัตรูทายถูก! ดูดพลัง ${round.bAbsorbed} หน่วย `;
+        turnMsg += `ผู้เล่นรับดาเมจ ${bDirect} หน่วย ศัตรูรับดาเมจ ${pDirect} หน่วย `;
+        if (pReflected) turnMsg += `ผู้เล่นสะท้อน ${pReflected} หน่วย! `;
+        if (bReflected) turnMsg += `ศัตรูสะท้อน ${bReflected} หน่วย! `;
+        newPlayerHP -= bDirect + bReflected;
+        newBotHP -= pDirect + pReflected;
+        newPlayerHP += pHealAmount;
+        newBotHP += bHealAmount;
+        // HP cannot bank healing above 100 to absorb the subsequent poison tick.
+        // Keep negative HP here so healing can revive before the final death check.
+        newPlayerHP = Math.min(100, newPlayerHP);
+        newBotHP = Math.min(100, newBotHP);
+        if (pHealAmount) turnMsg += `ผู้เล่นฟื้นฟู ${pHealAmount} HP! `;
+        if (bHealAmount) turnMsg += `ศัตรูฟื้นฟู ${bHealAmount} HP! `;
 
         // Mana Burst
         if (pSkill === 'mana_burst') {
-            newPlayerMana += 2;
-            turnMsg += "สกิลระเบิดมานาทำงาน! ผู้เล่นได้รับมานาเพิ่ม 2 หน่วย ";
+            newPlayerMana += 1;
+            turnMsg += "สกิลระเบิดมานาทำงาน! ผู้เล่นได้รับมานาเพิ่ม 1 หน่วย ";
         }
         if (bSkill === 'mana_burst') {
-            newBotMana += 2;
-            turnMsg += "สกิลระเบิดมานาทำงาน! ศัตรูได้รับมานาเพิ่ม 2 หน่วย ";
+            newBotMana += 1;
+            turnMsg += "สกิลระเบิดมานาทำงาน! ศัตรูได้รับมานาเพิ่ม 1 หน่วย ";
         }
 
         // PHASE 5: End Turn (Poison, State Cleanup)
@@ -773,6 +741,7 @@ export const useGameStore = create<GameState>((set, get) => ({
             phase: 'evaluate',
             animationPhase: 'none',
             roundWinner: winner,
+            roundResult: round,
             turnCount: nextTurn,
             activeField: currentField, // Update immediately for field_control
             pendingField: nextField, // Applied next turn if random generated

@@ -3,13 +3,15 @@ import { getSkillInfo } from './Card3D';
 import { X } from 'lucide-react';
 
 export default function DetailCardModal() {
-    const { selectedDetailCard, setDetailCard } = useGameStore();
+    const { selectedDetailCard, detailCardContext, playerSilenced, botSilenced, setDetailCard } = useGameStore();
 
     if (!selectedDetailCard) return null;
 
     const { id, image, power, element, rarity, skill } = selectedDetailCard;
     const effectiveRarity = rarity || getCardRarity(power);
-    const manaCost = getCardManaCost(selectedDetailCard);
+    const silenced = detailCardContext?.kind === 'playerHand' ? playerSilenced
+        : detailCardContext?.kind === 'botHand' ? botSilenced : false;
+    const manaCost = detailCardContext?.manaCost ?? getCardManaCost(selectedDetailCard, silenced);
     const skillInfo = getSkillInfo(skill);
 
     // Styling logic based on element

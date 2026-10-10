@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame, useThree, extend } from '@react-three/fiber';
 import { useSpring, animated, SpringValue } from '@react-spring/three';
 import { Sparkles, Trail, shaderMaterial, Sky, useTexture, Html } from '@react-three/drei';
-import { useGameStore } from '../store/gameStore';
+import { calculateRound, useGameStore } from '../store/gameStore';
 import type { ElementType } from '../store/gameStore';
 import * as THREE from 'three';
 import { audioManager } from '../utils/audioManager';
@@ -763,7 +763,7 @@ const ShieldGlow = ({ active, element, position }: { active: boolean, element: E
 };
 
 export default function Effects3D() {
-    const { animationPhase, boardPlayerCard, boardBotCard, activeField, playerGambleGuess, botGambleGuess, playerSilenced, botSilenced } = useGameStore();
+    const { animationPhase, boardPlayerCard, boardBotCard, activeField, playerGambleGuess, botGambleGuess, playerSilenced, botSilenced, phase, roundResult } = useGameStore();
     const [combatState, setCombatState] = useState<'none' | 'attack' | 'shield' | 'counter' | 'impact'>('none');
     const [shakeActive, setShakeActive] = useState(false);
 
@@ -780,41 +780,22 @@ export default function Effects3D() {
         }
     }, [animationPhase]);
 
-    // Skill flags respecting Silence status
-    const pSkill = playerSilenced ? 'none' : (boardPlayerCard?.skill || 'none');
-    const bSkill = botSilenced ? 'none' : (boardBotCard?.skill || 'none');
-
+    // Keep the completed round snapshot while next-turn Silence updates the store.
+    const round = phase === 'evaluate' && roundResult ? roundResult
+        : boardPlayerCard && boardBotCard ? calculateRound({
+            playerCard: boardPlayerCard, botCard: boardBotCard, field: activeField,
+            playerSilenced, botSilenced, playerGuess: playerGambleGuess, botGuess: botGambleGuess
+        }) : null;
+    const { pBase = 0, bBase = 0, pp = 0, bp = 0, pSkill = 'none', bSkill = 'none',
+        pFieldBonus: pBonus = 0, bFieldBonus: bBonus = 0 } = round || {};
     const pPierce = pSkill === 'pierce';
     const bPierce = bSkill === 'pierce';
-    const pReflect = pSkill === 'reflect';
-    const bReflect = bSkill === 'reflect';
-    const pLifesteal = pSkill === 'lifesteal';
-    const bLifesteal = bSkill === 'lifesteal';
-    const pHeal = pSkill === 'heal';
-    const bHeal = bSkill === 'heal';
-
-    // Base power includes +10 if Pierce is active
-    let pBase = (boardPlayerCard?.power || 0) + (pPierce ? 10 : 0);
-    let bBase = (boardBotCard?.power || 0) + (bPierce ? 10 : 0);
-
-    // Mimic
-    if (pSkill === 'mimic' && boardBotCard) pBase = boardBotCard.power;
-    if (bSkill === 'mimic' && boardPlayerCard) bBase = boardPlayerCard.power;
-
-    // Calculate actual power with field bonus (nullified by opponent's Pierce)
-    const pBonus = (boardPlayerCard?.element === activeField && !bPierce) ? 25 : 0;
-    const bBonus = (boardBotCard?.element === activeField && !pPierce) ? 25 : 0;
-
-    let pp = pBase + pBonus;
-    let bp = bBase + bBonus;
-
-    // Gamble
-    const pGambleSuccess = pSkill === 'gamble' && boardBotCard && playerGambleGuess === boardBotCard.element;
-    const bGambleSuccess = bSkill === 'gamble' && boardPlayerCard && botGambleGuess === boardPlayerCard.element;
-    const pAbsorb = pGambleSuccess ? bp : 0;
-    const bAbsorb = bGambleSuccess ? pp : 0;
-    if (pGambleSuccess) { pp += pAbsorb; bp = 0; }
-    if (bGambleSuccess) { bp += bAbsorb; pp = 0; }
+    const pReflect = (round?.pReflected || 0) > 0;
+    const bReflect = (round?.bReflected || 0) > 0;
+    const pLifesteal = pSkill === 'lifesteal' && (round?.pHealAmount || 0) > 0;
+    const bLifesteal = bSkill === 'lifesteal' && (round?.bHealAmount || 0) > 0;
+    const pHeal = pSkill === 'heal' && (round?.pHealAmount || 0) > 0;
+    const bHeal = bSkill === 'heal' && (round?.bHealAmount || 0) > 0;
 
     // Detect if this is a counter-attack scenario
     const isCounterAttack = (pBase <= bBase && pp > bp) || (bBase <= pBase && bp > pp);
@@ -943,28 +924,28 @@ export default function Effects3D() {
                     <div className="text-4xl animate-bounce drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]" title="Field Bonus Pierced!">🛡️💥</div>
                 </Html>
             )}
-            {combatState === 'impact' && pReflect && bp > pp && (
+            {combatState === 'impact' && pReflect && (
                 <Html position={[playerStart[0], playerStart[1] + 2, playerStart[2]]} center>
                     <div className="text-3xl font-black text-purple-400 uppercase tracking-widest animate-[bounce_0.5s_ease-out_2] drop-shadow-[0_0_15px_rgba(168,85,247,0.9)]">
                         REFLECT! 🪞
                     </div>
                 </Html>
             )}
-            {combatState === 'impact' && bReflect && pp > bp && (
+            {combatState === 'impact' && bReflect && (
                 <Html position={[botStart[0], botStart[1] + 2, botStart[2]]} center>
                     <div className="text-3xl font-black text-purple-400 uppercase tracking-widest animate-[bounce_0.5s_ease-out_2] drop-shadow-[0_0_15px_rgba(168,85,247,0.9)]">
                         REFLECT! 🪞
                     </div>
                 </Html>
             )}
-            {combatState === 'impact' && pLifesteal && pp > bp && (
+            {combatState === 'impact' && pLifesteal && (
                 <Html position={[playerStart[0], playerStart[1] + 2, playerStart[2]]} center>
                     <div className="text-3xl font-black text-green-400 uppercase tracking-widest animate-[ping_1s_ease-out_forwards] drop-shadow-[0_0_15px_rgba(74,222,128,0.9)]">
                         + LIFESTEAL 🩸
                     </div>
                 </Html>
             )}
-            {combatState === 'impact' && bLifesteal && bp > pp && (
+            {combatState === 'impact' && bLifesteal && (
                 <Html position={[botStart[0], botStart[1] + 2, botStart[2]]} center>
                     <div className="text-3xl font-black text-green-400 uppercase tracking-widest animate-[ping_1s_ease-out_forwards] drop-shadow-[0_0_15px_rgba(74,222,128,0.9)]">
                         + LIFESTEAL 🩸
@@ -1172,7 +1153,7 @@ const LightningMaterial = shaderMaterial(
 extend({ RingPulseMaterial, VortexMaterial, LightningMaterial, ShatterMaterial });
 
 // ─── ANIMATED SHADER PLANE ────────────────────────────────────────────────
-const ShaderPlane = ({ material: MatType, color, opacity, position, rotation, scale, speed = 1 }: any) => {
+export const ShaderPlane = ({ material: MatType, color, opacity, position, rotation, scale, speed = 1 }: any) => {
     const matRef = useRef<any>(null);
     useFrame(({ clock }) => {
         if (matRef.current) matRef.current.uTime = clock.getElapsedTime() * speed;
@@ -1285,7 +1266,7 @@ const ShockwaveRings = ({ color, count = 3 }: any) => {
 };
 
 // ─── TORNADO CONE ─────────────────────────────────────────────────────────
-const TornadoCone = ({ color }: any) => {
+export const TornadoCone = ({ color }: any) => {
     const meshRef = useRef<THREE.Mesh>(null);
     useFrame(({ clock }) => {
         if (meshRef.current) meshRef.current.rotation.y = clock.getElapsedTime() * 6;
@@ -1302,7 +1283,7 @@ const TornadoCone = ({ color }: any) => {
 const CrystalShards = ({ color, glowColor, count = 12 }: any) => {
     const groupRef = useRef<THREE.Group>(null);
     const shards = useMemo(() =>
-        Array.from({ length: count }, (_, i) => ({
+        Array.from({ length: count }, () => ({
             x: (Math.random() - 0.5) * 12,
             z: (Math.random() - 0.5) * 12,
             h: 1 + Math.random() * 4,

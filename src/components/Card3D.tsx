@@ -29,17 +29,17 @@ interface Card3DProps {
 export const getSkillInfo = (skill?: SkillType) => {
     switch (skill) {
         case 'lifesteal': return { name: 'Lifesteal (ดูดเลือด)', desc: 'ถ้าชนะ ฮีล 100% | ถ้าแพ้ ฮีล 50% ของดาเมจที่โดน', icon: '🩸', color: 'text-red-400' };
-        case 'reflect': return { name: 'Reflect (สะท้อน)', desc: 'สะท้อน 30% ของดาเมจกลับไปหาศัตรู', icon: '🛡️', color: 'text-amber-700' };
+        case 'reflect': return { name: 'Reflect (สะท้อน)', desc: 'สะท้อน 30% ของดาเมจตรงหลังลดจากสนาม รวมรอบเสมอ ปัดลง ไม่สะท้อนพิษหรือการสะท้อน', icon: '🛡️', color: 'text-amber-700' };
         case 'pierce': return { name: 'Pierce (เจาะเกราะ)', desc: 'ทำลายบัฟสนามของศัตรู และเพิ่มพลังตัวเอง +10', icon: '💥', color: 'text-orange-400' };
-        case 'soul_swap': return { name: 'Soul Swap (สลับวิญญาณ)', desc: 'สลับ HP และไพ่ทั้งหมดบนมือกับศัตรูทันที (10 มานา)', icon: '⚡', color: 'text-fuchsia-400' };
-        case 'no_mana': return { name: 'No Mana (ไร้มานา)', desc: 'สามารถใช้งานการ์ดใบนี้ได้ฟรีๆ (0 มานา)', icon: '🆓', color: 'text-blue-300' };
-        case 'heal': return { name: 'Heal (ฟื้นฟู)', desc: 'ฟื้นฟูเลือดคืน 100% จากดาเมจที่ทำได้หรือที่ได้รับ', icon: '💖', color: 'text-emerald-400' };
-        case 'gamble': return { name: 'Gamble (ทายใจ)', desc: 'ถ้าทายธาตุถูก จะดูดพลังศัตรูมาบวกเพิ่มให้ตัวเอง', icon: '🎲', color: 'text-amber-400' };
+        case 'soul_swap': return { name: 'Soul Swap (สลับวิญญาณ)', desc: 'สลับ HP และไพ่บนมือ (8 มานา) ใช้พร้อมกันหักล้าง เมื่อถูกใบ้จ่ายตามระดับการ์ดและไม่สลับ', icon: '⚡', color: 'text-fuchsia-400' };
+        case 'no_mana': return { name: 'No Mana (ไร้มานา)', desc: 'ใช้ 0 มานา แต่พลังรอบนี้ลด 15 (ต่ำสุด 0) เมื่อถูกใบ้จ่ายตามระดับการ์ดและไม่ลดพลัง', icon: '🆓', color: 'text-blue-300' };
+        case 'heal': return { name: 'Heal (ฟื้นฟู)', desc: 'ชนะฮีล 100% ของดาเมจตรงที่ทำ แพ้หรือเสมอฮีล 50% ของดาเมจตรงที่รับ ปัดลง สูงสุด 30 HP ก่อนพิษและตรวจตาย', icon: '💖', color: 'text-emerald-400' };
+        case 'gamble': return { name: 'Gamble (ทายใจ)', desc: 'ทายถูกดูดพลังหลังโบนัส 50% ปัดลง สูงสุด 30 มาเพิ่มตนเองและลดศัตรู หากทั้งคู่ทายถูกการดูดหักล้าง', icon: '🎲', color: 'text-amber-400' };
         case 'field_control': return { name: 'Field Control (คุมพื้นที่)', desc: 'เปลี่ยนสนามเป็นธาตุตัวเองทันที ได้รับโบนัส +25', icon: '🌍', color: 'text-indigo-400' };
         case 'poison': return { name: 'Poison (พิษ)', desc: 'ศัตรูติดพิษ โดนดาเมจเทิร์นละ 10 เป็นเวลา 3 เทิร์น', icon: '☠️', color: 'text-purple-400' };
         case 'silence': return { name: 'Silence (ใบ้)', desc: 'ทำให้ศัตรูในเทิร์นหน้าสกิลใบ้ ไม่สามารถใช้สกิลได้', icon: '🤐', color: 'text-stone-400' };
-        case 'mimic': return { name: 'Mimic (เลียนแบบ)', desc: 'ก๊อปปี้พลังโจมตีตั้งต้นของการ์ดที่ศัตรูลงมา', icon: '🎭', color: 'text-pink-400' };
-        case 'mana_burst': return { name: 'Mana Burst (ระเบิดมานา)', desc: 'หลังจากจบการต่อสู้ จะได้รับมานาคืน 2 หน่วย', icon: '💎', color: 'text-blue-400' };
+        case 'mimic': return { name: 'Mimic (เลียนแบบ)', desc: 'เพิ่มพลังเข้าหาพลังตั้งต้นศัตรู สูงสุด +15 ไม่ลดพลังตนเองและไม่คัดลอกโบนัส', icon: '🎭', color: 'text-pink-400' };
+        case 'mana_burst': return { name: 'Mana Burst (ระเบิดมานา)', desc: 'จบรอบฟื้นมานาเพิ่ม 1 รวมปกติเป็น 3 สูงสุด 10', icon: '💎', color: 'text-blue-400' };
         default: return null;
     }
 };
@@ -294,7 +294,6 @@ export default function Card3D({
                 rotation={[0, 0, 0]} // Default rotation
                 polar={[-Math.PI / 4, Math.PI / 4]} // Vertical limits
                 azimuth={[-Infinity, Infinity]} // Horizontal limits
-                config={{ mass: 1, tension: 170, friction: 26 }} // Spring config
             >
                 {cardContent}
             </PresentationControls>
